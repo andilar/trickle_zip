@@ -1,0 +1,7 @@
+@startuml
+Alice -> Bob: Compression Request
+Bob --> Alice: Compression Response
+
+Alice -> Bob: Another Compression Request
+Alice <-- Bob: Another Compression Response
+@enduml
