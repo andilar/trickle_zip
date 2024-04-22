@@ -1,7 +1,0 @@
-@startuml
-Alice -> Tricklezip: Compression Request
-Tricklezip --> Alice: Compression Response
-
-Alice -> Tricklezip: Another Compression Request
-Alice <-- Tricklezip: Another Compression Response
-@enduml
