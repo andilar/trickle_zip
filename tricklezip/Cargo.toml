@@ -2,5 +2,24 @@
 name = "tricklezip"
 version = "0.1.0"
 edition = "2021"
+publish = ["in-carapps-cargo-local"]
 
 [dependencies]
+zip = "2.2.3"
+
+[registry]
+
+[registries.in-carapps-cargo-remote]
+index = "sparse+https://artifactory.iav.com/artifactory/api/cargo/in-carapps-cargo-remote/index/"
+
+[registries.in-carapps-cargo-local]
+index = "sparse+https://artifactory.iav.com/artifactory/api/cargo/in-carapps-cargo-local/index/"
+
+# The crates.io default source for crates is available under the name
+# "crates-io", and here we use the `replace-with` key to indicate that it's
+# replaced with one of our registries from the [registries] table above.
+[source.crates-io]
+replace-with = "in-carapps-cargo-remote"
+
+[http]
+check-revoke = false
