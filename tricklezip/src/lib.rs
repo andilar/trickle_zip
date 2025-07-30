@@ -4,7 +4,7 @@ name = "tricklezip"
 version = "0.1.0"
 edition = "2021"
 description = "A relaxed compression library for embedded devices using DEFLATE algorithm"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 keywords = ["compression", "deflate", "embedded", "no-std"]
 categories = ["compression", "embedded", "no-std"]
 
