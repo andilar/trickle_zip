@@ -59,7 +59,7 @@ mod tests {
             max_chain_length: 64,
         };
         
-        let compressor = TrickleCompressor::with_config(config.clone());
+        let mut compressor = TrickleCompressor::with_config(config.clone());
         
         // Test that the compressor was created successfully
         // We can't access private fields, so we test functionality instead
