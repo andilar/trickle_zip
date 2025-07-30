@@ -15,9 +15,9 @@ A relaxed compression library for embedded devices, which does not use up all yo
 ### Basic Compression
 
 ```rust
-use tricklezip::{TrickleCompressor, compress};
+use tricklezip::{TrickleCompressor, compress, TrickleError};
 
-fn example() -> Result<(), Box<dyn std::error::Error>> {
+fn example() -> Result<(), TrickleError> {
     // One-shot compression
     let input = b"Hello, world! This is some data to compress.";
     let mut output = vec![0u8; input.len() * 2];
@@ -51,9 +51,9 @@ fn example() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust,ignore
 use std::time::Duration;
-use tricklezip::TrickleCompressor;
+use tricklezip::{TrickleCompressor, TrickleError};
 
-fn timed_example() -> Result<(), Box<dyn std::error::Error>> {
+fn timed_example() -> Result<(), TrickleError> {
     let mut compressor = TrickleCompressor::new();
     let input = b"test data";
     let mut output = vec![0u8; 1024];

@@ -37,6 +37,21 @@ pub enum TrickleError {
     TimeoutExceeded,
 }
 
+impl core::fmt::Display for TrickleError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TrickleError::InsufficientInput => write!(f, "Input buffer is too small"),
+            TrickleError::InsufficientOutput => write!(f, "Output buffer is too small"),
+            TrickleError::InvalidData => write!(f, "Invalid DEFLATE data"),
+            TrickleError::NeedsMoreWork => write!(f, "Compression is not yet complete"),
+            TrickleError::TimeoutExceeded => write!(f, "Time limit exceeded"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for TrickleError {}
+
 /// Compression level (0 = no compression, 9 = maximum compression)
 #[derive(Debug, Clone, Copy)]
 pub struct CompressionLevel(u8);
