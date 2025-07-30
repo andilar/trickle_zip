@@ -1,4 +1,4 @@
-use crate::{huffman::HuffmanCoder, lz77::Lz77Encoder, bitstream::BitWriter, CompressionConfig, TrickleError, Result, CompressionStats};
+use crate::{huffman::HuffmanCoder, lz77::Lz77Encoder, bitstream::BitWriter, CompressionConfig, Result, CompressionStats};
 
 pub struct DeflateState {
     lz77: Lz77Encoder,

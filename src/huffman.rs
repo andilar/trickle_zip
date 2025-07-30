@@ -1,4 +1,4 @@
-use crate::{lz77::Token, TrickleError, Result};
+use crate::{lz77::Token, Result};
 
 extern crate alloc;
 use alloc::vec::Vec;

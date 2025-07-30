@@ -1,4 +1,4 @@
-use crate::{TrickleError, Result};
+use crate::{Result};
 
 extern crate alloc;
 use alloc::vec::Vec;
