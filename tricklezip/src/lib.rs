@@ -1,25 +1,3 @@
-// Cargo.toml
-[package]
-name = "tricklezip"
-version = "0.1.0"
-edition = "2021"
-description = "A relaxed compression library for embedded devices using DEFLATE algorithm"
-license = "Apache-2.0"
-keywords = ["compression", "deflate", "embedded", "no-std"]
-categories = ["compression", "embedded", "no-std"]
-
-[dependencies]
-# Optional std support
-[features]
-default = []
-std = []
-
-[dev-dependencies]
-# For testing only
-
-# src/lib.rs
-#![cfg_attr(not(feature = "std"), no_std)]
-#![doc = include_str!("../README.md")]
 
 //! TrickleZip - A relaxed compression library for embedded devices
 //! 
