@@ -16,7 +16,8 @@ mod bitstream;
 
 pub use deflate::*;
 
-use core::time::Duration;
+#[cfg(feature = "std")]
+use std::time::Duration;
 
 /// Result type for TrickleZip operations
 pub type Result<T> = core::result::Result<T, TrickleError>;

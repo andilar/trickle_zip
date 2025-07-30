@@ -49,7 +49,7 @@ fn example() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Time-Limited Compression
 
-```rust
+```rust,ignore
 use std::time::Duration;
 use tricklezip::TrickleCompressor;
 
