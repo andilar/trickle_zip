@@ -1,5 +1,8 @@
 use crate::{lz77::Token, TrickleError, Result};
 
+extern crate alloc;
+use alloc::vec::Vec;
+
 pub struct HuffmanCoder {
     // Simplified Huffman tables
 }
