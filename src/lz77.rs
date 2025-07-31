@@ -1,4 +1,4 @@
-use crate::{Result};
+use crate::{ Result };
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -6,7 +6,10 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone)]
 pub enum Token {
     Literal(u8),
-    Match { length: usize, distance: usize },
+    Match {
+        length: usize,
+        distance: usize,
+    },
 }
 
 pub struct Lz77Encoder {
@@ -27,24 +30,24 @@ impl Lz77Encoder {
             position: 0,
         }
     }
-    
+
     pub fn encode(&mut self, input: &[u8]) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
         let mut i = 0;
-        
+
         while i < input.len() {
             // Simple literal encoding for now
             // Real implementation would do LZ77 match finding
             tokens.push(Token::Literal(input[i]));
             i += 1;
         }
-        
+
         // Update sliding window
         self.window.extend_from_slice(input);
         if self.window.len() > self.window_size {
             self.window.drain(..self.window.len() - self.window_size);
         }
-        
+
         Ok(tokens)
     }
 }
