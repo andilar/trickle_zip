@@ -78,6 +78,12 @@ pub struct InflateState {
     finished: bool,
 }
 
+impl Default for InflateState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InflateState {
     pub fn new() -> Self {
         Self {
