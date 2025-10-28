@@ -6,14 +6,13 @@ on:
       - completed
 jobs:
   sonarqube-runner:
-    name: SonarQube
+    name: SonarQube Scanner
     runs-on: ubuntu-latest
     steps:
-      - name: checkount sc
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
-      - name: SonarQube Scan
+      - name: SonarQube Scanning
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
