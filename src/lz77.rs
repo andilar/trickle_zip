@@ -3,7 +3,7 @@ use crate::{ Result };
 extern crate alloc;
 use alloc::vec::Vec;
 
-#[derive(Debug, Clone)]
+
 pub enum Token {
     Literal(u8),
     Match {
