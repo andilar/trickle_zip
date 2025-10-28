@@ -14,20 +14,16 @@ pub enum Token {
 
 pub struct Lz77Encoder {
     window_size: usize,
-    max_lazy_match: usize,
-    max_chain_length: usize,
     window: Vec<u8>,
-    position: usize,
 }
 
 impl Lz77Encoder {
-    pub fn new(window_size: usize, max_lazy_match: usize, max_chain_length: usize) -> Self {
+    pub fn new(window_size: usize) -> Self {
         Self {
             window_size,
-            max_lazy_match,
-            max_chain_length,
+            
             window: Vec::with_capacity(window_size),
-            position: 0,
+            
         }
     }
 

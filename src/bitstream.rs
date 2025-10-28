@@ -76,9 +76,4 @@ impl BitWriter {
 
         Ok(bytes_written)
     }
-
-    /// Get current buffer state (for debugging)
-    pub fn buffer_info(&self) -> (u32, usize) {
-        (self.bit_buffer, self.bit_count)
-    }
 }
