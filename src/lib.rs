@@ -6,7 +6,6 @@
 //! Based on DEFLATE algorithm (RFC1951), designed to be CPU-friendly
 //! by allowing incremental compression with time limits.
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
 mod deflate;
