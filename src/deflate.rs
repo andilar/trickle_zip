@@ -20,9 +20,7 @@ impl DeflateState {
     pub fn new(config: &CompressionConfig) -> Self {
         Self {
             lz77: Lz77Encoder::new(
-                config.window_size,
-                config.max_lazy_match,
-                config.max_chain_length
+                config.window_size
             ),
             huffman: HuffmanCoder::new(),
             bit_writer: BitWriter::new(),
