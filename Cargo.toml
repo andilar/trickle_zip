@@ -2,16 +2,20 @@
 name = "tricklezip"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 description = "A relaxed compression library for embedded devices using DEFLATE algorithm"
 license = "Apache-2.0"
+repository = "https://github.com/andilar/trickle_zip"
+homepage = "https://github.com/andilar/trickle_zip"
+documentation = "https://docs.rs/tricklezip"
+readme = "README.md"
 keywords = ["compression", "deflate", "embedded", "no-std"]
 categories = ["compression", "embedded", "no-std"]
+exclude = [".github/", ".vscode/", "sonar-project.properties"]
 
 [dependencies]
-# Optional std support
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+
 [features]
 default = []
 std = []
-
-[dev-dependencies]
-# For testing only

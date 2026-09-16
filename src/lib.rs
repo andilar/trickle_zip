@@ -9,11 +9,6 @@
 extern crate alloc;
 
 mod deflate;
-mod huffman;
-mod lz77;
-mod bitstream;
-
-pub use deflate::*;
 
 #[cfg(feature = "std")]
 use std::time::Duration;
@@ -24,15 +19,15 @@ pub type Result<T> = core::result::Result<T, TrickleError>;
 /// Errors that can occur during compression/decompression
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrickleError {
-    /// Input buffer is too small
+    /// More compressed input is required to complete decompression.
     InsufficientInput,
-    /// Output buffer is too small
+    /// The supplied output buffer has no space for further progress.
     InsufficientOutput,
-    /// Invalid DEFLATE data
+    /// The input is not a valid raw DEFLATE stream.
     InvalidData,
-    /// Compression is not yet complete
+    /// The operation could not make progress in the current call.
     NeedsMoreWork,
-    /// Time limit exceeded
+    /// The time limit elapsed before any work could be completed.
     TimeoutExceeded,
 }
 
@@ -52,31 +47,46 @@ impl core::fmt::Display for TrickleError {
 impl std::error::Error for TrickleError {}
 
 /// Compression level (0 = no compression, 9 = maximum compression)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CompressionLevel(u8);
 
 impl CompressionLevel {
+    /// Store blocks without compression.
     pub const NONE: Self = Self(0);
+    /// Optimize for compression speed.
     pub const FAST: Self = Self(1);
+    /// Balance speed and compressed size.
     pub const BALANCED: Self = Self(6);
+    /// Optimize for compressed size.
     pub const BEST: Self = Self(9);
 
-    pub fn new(level: u8) -> Self {
-        Self(level.min(9))
+    /// Creates a compression level, clamped to the supported range of 0 through 9.
+    pub const fn new(level: u8) -> Self {
+        if level > 9 {
+            Self(9)
+        } else {
+            Self(level)
+        }
     }
 
-    pub fn value(&self) -> u8 {
+    /// Returns the numeric compression level.
+    pub const fn value(self) -> u8 {
         self.0
     }
 }
 
 /// Configuration for the compression process
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompressionConfig {
+    /// Compression level from no compression through best compression.
     pub level: CompressionLevel,
+    /// Requested DEFLATE window size in bytes.
+    ///
+    /// Values are rounded up to a power of two and constrained to 512 through 32,768.
     pub window_size: usize,
-    pub max_lazy_match: usize,
-    pub max_chain_length: usize,
+    /// Maximum number of input bytes processed by one `compress_trickle` call.
+    /// Smaller values provide finer cooperative scheduling at some throughput cost.
+    pub max_input_per_call: usize,
 }
 
 impl Default for CompressionConfig {
@@ -84,13 +94,12 @@ impl Default for CompressionConfig {
         Self {
             level: CompressionLevel::BALANCED,
             window_size: 32768, // 32KB sliding window
-            max_lazy_match: 258,
-            max_chain_length: 256,
+            max_input_per_call: 4096,
         }
     }
 }
 
-/// Main compressor state
+/// Stateful raw-DEFLATE compressor.
 pub struct TrickleCompressor {
     config: CompressionConfig,
     state: deflate::DeflateState,
@@ -110,54 +119,71 @@ impl TrickleCompressor {
         }
     }
 
-    /// Compress data incrementally without time limits
-    /// Returns (bytes_consumed, bytes_written, is_finished)
+    /// Compresses at most one configured work unit.
+    ///
+    /// Returns `(bytes_consumed, bytes_written, is_finished)`. Set `finish` when
+    /// the supplied input contains the end of the stream. Continue passing any
+    /// unconsumed input until `is_finished` is true.
     pub fn compress_trickle(
         &mut self,
         input: &[u8],
         output: &mut [u8],
-        finish: bool
+        finish: bool,
     ) -> Result<(usize, usize, bool)> {
         self.state.compress_chunk(input, output, finish)
     }
 
-    /// Compress data with a time limit
-    /// Returns (bytes_consumed, bytes_written, is_finished)
+    /// Compresses input within a cooperative time budget.
+    ///
+    /// The deadline is checked between configured work units. When it expires
+    /// after progress, that progress is returned with `is_finished = false`.
     #[cfg(feature = "std")]
     pub fn compress_timed(
         &mut self,
         input: &[u8],
         output: &mut [u8],
         finish: bool,
-        time_limit: Duration
+        time_limit: Duration,
     ) -> Result<(usize, usize, bool)> {
         let start = std::time::Instant::now();
+        let mut total_consumed = 0;
+        let mut total_written = 0;
 
         loop {
             if start.elapsed() >= time_limit {
-                return Err(TrickleError::TimeoutExceeded);
+                return if total_consumed == 0 && total_written == 0 {
+                    Err(TrickleError::TimeoutExceeded)
+                } else {
+                    Ok((total_consumed, total_written, false))
+                };
             }
 
-            match self.compress_trickle(input, output, finish) {
-                Ok(result) => {
-                    return Ok(result);
-                }
-                Err(TrickleError::NeedsMoreWork) => {
-                    continue;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
+            let (consumed, written, finished) = self.compress_trickle(
+                &input[total_consumed..],
+                &mut output[total_written..],
+                finish,
+            )?;
+            total_consumed += consumed;
+            total_written += written;
+
+            if finished || (total_consumed == input.len() && !finish) {
+                return Ok((total_consumed, total_written, finished));
+            }
+            if total_written == output.len() {
+                return Ok((total_consumed, total_written, false));
+            }
+            if consumed == 0 && written == 0 {
+                return Err(TrickleError::NeedsMoreWork);
             }
         }
     }
 
-    /// Reset the compressor for reuse
+    /// Resets the compressor for a new raw-DEFLATE stream.
     pub fn reset(&mut self) {
         self.state = deflate::DeflateState::new(&self.config);
     }
 
-    /// Get current compression statistics
+    /// Returns statistics for the current stream.
     pub fn stats(&self) -> CompressionStats {
         self.state.stats()
     }
@@ -169,15 +195,18 @@ impl Default for TrickleCompressor {
     }
 }
 
-/// Compression statistics
-#[derive(Debug, Clone, Copy)]
+/// Compression statistics for the current stream.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CompressionStats {
+    /// Number of uncompressed input bytes consumed.
     pub bytes_processed: usize,
+    /// Number of compressed output bytes produced.
     pub bytes_output: usize,
+    /// Compressed bytes divided by processed bytes, or zero before input.
     pub compression_ratio: f32,
 }
 
-/// Convenience function for one-shot compression
+/// Compresses an entire raw-DEFLATE stream into a caller-provided buffer.
 pub fn compress(input: &[u8], output: &mut [u8]) -> Result<usize> {
     let mut compressor = TrickleCompressor::new();
     let mut total_written = 0;
@@ -187,7 +216,7 @@ pub fn compress(input: &[u8], output: &mut [u8]) -> Result<usize> {
         let (consumed, written, finished) = compressor.compress_trickle(
             &input[input_offset..],
             &mut output[total_written..],
-            true
+            true,
         )?;
 
         input_offset += consumed;
@@ -197,7 +226,7 @@ pub fn compress(input: &[u8], output: &mut [u8]) -> Result<usize> {
             break;
         }
 
-        if total_written >= output.len() {
+        if total_written >= output.len() && !finished {
             return Err(TrickleError::InsufficientOutput);
         }
     }
@@ -205,17 +234,15 @@ pub fn compress(input: &[u8], output: &mut [u8]) -> Result<usize> {
     Ok(total_written)
 }
 
-/// Convenience function for one-shot decompression
+/// Decompresses an entire raw-DEFLATE stream into a caller-provided buffer.
 pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize> {
     let mut decompressor = TrickleDecompressor::new();
     let mut total_written = 0;
     let mut input_offset = 0;
 
     loop {
-        let (consumed, written, finished) = decompressor.decompress_trickle(
-            &input[input_offset..],
-            &mut output[total_written..]
-        )?;
+        let (consumed, written, finished) = decompressor
+            .decompress_trickle(&input[input_offset..], &mut output[total_written..])?;
 
         input_offset += consumed;
         total_written += written;
@@ -224,7 +251,11 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize> {
             break;
         }
 
-        if total_written >= output.len() {
+        if consumed == 0 && written == 0 {
+            return Err(TrickleError::InsufficientInput);
+        }
+
+        if total_written >= output.len() && !finished {
             return Err(TrickleError::InsufficientOutput);
         }
     }
@@ -232,7 +263,7 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize> {
     Ok(total_written)
 }
 
-/// Main decompressor state
+/// Stateful raw-DEFLATE decompressor.
 pub struct TrickleDecompressor {
     state: deflate::InflateState,
 }
@@ -245,17 +276,18 @@ impl TrickleDecompressor {
         }
     }
 
-    /// Decompress data incrementally
-    /// Returns (bytes_consumed, bytes_written, is_finished)
+    /// Decompresses data incrementally.
+    ///
+    /// Returns `(bytes_consumed, bytes_written, is_finished)`.
     pub fn decompress_trickle(
         &mut self,
         input: &[u8],
-        output: &mut [u8]
+        output: &mut [u8],
     ) -> Result<(usize, usize, bool)> {
         self.state.decompress_chunk(input, output)
     }
 
-    /// Reset the decompressor for reuse
+    /// Resets the decompressor for a new raw-DEFLATE stream.
     pub fn reset(&mut self) {
         self.state = deflate::InflateState::new();
     }

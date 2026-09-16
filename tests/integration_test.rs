@@ -1,95 +1,168 @@
-#[cfg(test)]
-mod tests {
-    use tricklezip::*;
+use tricklezip::{
+    compress, decompress, CompressionConfig, CompressionLevel, TrickleCompressor,
+    TrickleDecompressor, TrickleError,
+};
 
-    #[test]
-    fn test_basic_compression() {
-        let input = b"Hello, world! This is a test string for compression.";
-        let mut output = vec![0u8; input.len() * 2];
-        
-        let compressed_size = compress(input, &mut output).unwrap();
-        assert!(compressed_size > 0);
-        assert!(compressed_size <= output.len());
-    }
+const KNOWN_DEFLATE: &[u8] = &[
+    243, 72, 205, 201, 201, 215, 81, 40, 74, 44, 87, 112, 113, 117, 243, 113, 12, 113, 85, 4, 0,
+];
+const KNOWN_PLAINTEXT: &[u8] = b"Hello, raw DEFLATE!";
 
-    #[test]
-    fn test_incremental_compression() {
-        let mut compressor = TrickleCompressor::new();
-        let input = b"Test data for incremental compression";
-        let mut output = vec![0u8; input.len() * 2];
-        
+#[test]
+fn compresses_and_round_trips_repetitive_data() {
+    let input = vec![b'a'; 8 * 1024];
+    let mut compressed = vec![0; input.len() + 256];
+    let compressed_len = compress(&input, &mut compressed).unwrap();
+
+    assert!(compressed_len < input.len());
+    assert_ne!(&compressed[..compressed_len], input.as_slice());
+
+    let mut restored = vec![0; input.len()];
+    let restored_len = decompress(&compressed[..compressed_len], &mut restored).unwrap();
+    assert_eq!(restored_len, input.len());
+    assert_eq!(restored, input);
+}
+
+#[test]
+fn decompresses_a_known_rfc1951_stream() {
+    let mut output = [0; 64];
+    let written = decompress(KNOWN_DEFLATE, &mut output).unwrap();
+
+    assert_eq!(&output[..written], KNOWN_PLAINTEXT);
+}
+
+#[test]
+fn compression_is_bounded_per_call() {
+    let config = CompressionConfig {
+        level: CompressionLevel::FAST,
+        window_size: 16_384,
+        max_input_per_call: 64,
+    };
+    let mut compressor = TrickleCompressor::with_config(config);
+    let input = vec![b'x'; 1024];
+    let mut output = vec![0; 2048];
+
+    let (consumed, _, finished) = compressor
+        .compress_trickle(&input, &mut output, true)
+        .unwrap();
+
+    assert!(consumed <= 64);
+    assert!(!finished);
+}
+
+#[test]
+fn incremental_stream_round_trips() {
+    let input = b"A streaming DEFLATE payload. ".repeat(300);
+    let config = CompressionConfig {
+        max_input_per_call: 97,
+        ..CompressionConfig::default()
+    };
+    let mut compressor = TrickleCompressor::with_config(config);
+    let mut compressed = vec![0; input.len() + 256];
+    let mut input_offset = 0;
+    let mut output_offset = 0;
+
+    loop {
         let (consumed, written, finished) = compressor
-            .compress_trickle(input, &mut output, true)
+            .compress_trickle(
+                &input[input_offset..],
+                &mut compressed[output_offset..],
+                true,
+            )
             .unwrap();
-        
-        assert_eq!(consumed, input.len());
-        assert!(written > 0);
-        assert!(finished);
+        input_offset += consumed;
+        output_offset += written;
+        if finished {
+            break;
+        }
     }
 
-    #[test]
-    fn test_compression_stats() {
-        let mut compressor = TrickleCompressor::new();
-        let input = b"Some test data";
-        let mut output = vec![0u8; input.len() * 2];
-        
-        compressor.compress_trickle(input, &mut output, true).unwrap();
-        
-        let stats = compressor.stats();
-        assert_eq!(stats.bytes_processed, input.len());
-        assert!(stats.bytes_output > 0);
-        assert!(stats.compression_ratio > 0.0);
+    let mut decompressor = TrickleDecompressor::new();
+    let mut restored = vec![0; input.len()];
+    let mut compressed_offset = 0;
+    let mut restored_offset = 0;
+
+    loop {
+        let output_end = (restored_offset + 31).min(restored.len());
+        let (consumed, written, finished) = decompressor
+            .decompress_trickle(
+                &compressed[compressed_offset..output_offset],
+                &mut restored[restored_offset..output_end],
+            )
+            .unwrap();
+        compressed_offset += consumed;
+        restored_offset += written;
+        if finished {
+            break;
+        }
     }
 
-    #[test]
-    fn test_decompression() {
-        let input = b"Test decompression data";
-        let mut output = vec![0u8; input.len() * 2];
-        
-        let decompressed_size = decompress(input, &mut output).unwrap();
-        assert_eq!(decompressed_size, input.len());
-    }
+    assert_eq!(compressed_offset, output_offset);
+    assert_eq!(restored_offset, input.len());
+    assert_eq!(restored, input);
+}
 
-    #[test]
-    fn test_custom_config() {
-        let config = CompressionConfig {
-            level: CompressionLevel::FAST,
-            window_size: 16384,
-            max_lazy_match: 64,
-            max_chain_length: 64,
-        };
-        
-        let mut compressor = TrickleCompressor::with_config(config.clone());
-        
-        // Test that the compressor was created successfully
-        // We can't access private fields, so we test functionality instead
-        let input = b"Test with custom config";
-        let mut output = vec![0u8; input.len() * 2];
-        
-        let result = compressor.compress_trickle(input, &mut output, true);
-        assert!(result.is_ok());
-        
-        // Verify the config values we set
-        assert_eq!(config.level.value(), 1);
-        assert_eq!(config.window_size, 16384);
-    }
+#[test]
+fn reports_output_and_input_errors() {
+    let input = b"some input that cannot fit into a one-byte output";
+    assert_eq!(
+        compress(input, &mut [0; 1]),
+        Err(TrickleError::InsufficientOutput)
+    );
 
-    #[cfg(feature = "std")]
-    #[test]
-    fn test_timed_compression() {
-        use std::time::Duration;
-        
-        let mut compressor = TrickleCompressor::new();
-        let input = b"Test data for timed compression";
-        let mut output = vec![0u8; input.len() * 2];
-        let time_limit = Duration::from_millis(100);
-        
-        let result = compressor.compress_timed(input, &mut output, true, time_limit);
-        assert!(result.is_ok());
-        
-        let (consumed, written, finished) = result.unwrap();
-        assert_eq!(consumed, input.len());
-        assert!(written > 0);
-        assert!(finished);
-    }
+    let truncated = &KNOWN_DEFLATE[..KNOWN_DEFLATE.len() - 1];
+    assert_eq!(
+        decompress(truncated, &mut [0; 64]),
+        Err(TrickleError::InsufficientInput)
+    );
+}
+
+#[test]
+fn tracks_compression_statistics() {
+    let input = vec![b'z'; 1024];
+    let mut output = vec![0; 2048];
+    let mut compressor = TrickleCompressor::new();
+
+    let (_, _, finished) = compressor
+        .compress_trickle(&input, &mut output, true)
+        .unwrap();
+
+    assert!(finished);
+    let stats = compressor.stats();
+    assert_eq!(stats.bytes_processed, input.len());
+    assert!(stats.bytes_output > 0);
+    assert!(stats.compression_ratio < 1.0);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn timed_compression_completes_or_returns_progress() {
+    use std::time::Duration;
+
+    let config = CompressionConfig {
+        max_input_per_call: 32,
+        ..CompressionConfig::default()
+    };
+    let mut compressor = TrickleCompressor::with_config(config);
+    let input = vec![b't'; 16 * 1024];
+    let mut output = vec![0; input.len() + 256];
+
+    let (consumed, written, _) = compressor
+        .compress_timed(&input, &mut output, true, Duration::from_millis(1))
+        .unwrap();
+
+    assert!(consumed > 0);
+    assert!(written <= output.len());
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn zero_time_limit_times_out_without_mutating_state() {
+    use std::time::Duration;
+
+    let mut compressor = TrickleCompressor::new();
+    let result = compressor.compress_timed(b"input", &mut [0; 64], true, Duration::from_millis(0));
+
+    assert_eq!(result, Err(TrickleError::TimeoutExceeded));
+    assert_eq!(compressor.stats().bytes_processed, 0);
 }

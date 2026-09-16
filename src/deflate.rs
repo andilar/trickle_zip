@@ -1,64 +1,91 @@
-use crate::{
-    huffman::HuffmanCoder,
-    lz77::Lz77Encoder,
-    bitstream::BitWriter,
-    CompressionConfig,
-    Result,
-    CompressionStats,
+extern crate alloc;
+
+use alloc::boxed::Box;
+use core::cmp;
+
+use miniz_oxide::{
+    deflate::{
+        core::{CompressionStrategy, CompressorOxide},
+        stream::deflate,
+    },
+    inflate::stream::{inflate, InflateState as MinizInflateState},
+    DataFormat, MZError, MZFlush, MZStatus,
 };
 
-pub struct DeflateState {
-    lz77: Lz77Encoder,
-    huffman: HuffmanCoder,
-    bit_writer: BitWriter,
+use crate::{CompressionConfig, CompressionStats, Result, TrickleError};
+
+pub(crate) struct DeflateState {
+    compressor: Box<CompressorOxide>,
+    max_input_per_call: usize,
     bytes_processed: usize,
     bytes_output: usize,
     finished: bool,
 }
 
 impl DeflateState {
-    pub fn new(config: &CompressionConfig) -> Self {
+    pub(crate) fn new(config: &CompressionConfig) -> Self {
+        let window_size = config.window_size.clamp(512, 32_768).next_power_of_two();
+        let window_bits = window_size.trailing_zeros() as u8;
+
         Self {
-            lz77: Lz77Encoder::new(
-                config.window_size
-            ),
-            huffman: HuffmanCoder::new(),
-            bit_writer: BitWriter::new(),
+            compressor: Box::new(CompressorOxide::with_params(
+                DataFormat::Raw,
+                config.level.value(),
+                CompressionStrategy::Default,
+                window_bits,
+            )),
+            max_input_per_call: config.max_input_per_call.max(1),
             bytes_processed: 0,
             bytes_output: 0,
             finished: false,
         }
     }
 
-    pub fn compress_chunk(
+    pub(crate) fn compress_chunk(
         &mut self,
         input: &[u8],
         output: &mut [u8],
-        finish: bool
+        finish: bool,
     ) -> Result<(usize, usize, bool)> {
         if self.finished {
             return Ok((0, 0, true));
         }
 
-        // Process input through LZ77
-        let tokens = self.lz77.encode(input)?;
-        self.bytes_processed += input.len();
+        let input_len = cmp::min(input.len(), self.max_input_per_call);
+        let chunk = &input[..input_len];
+        let flush = if finish && input_len == input.len() {
+            MZFlush::Finish
+        } else {
+            MZFlush::None
+        };
+        let result = deflate(&mut self.compressor, chunk, output, flush);
 
-        // Encode with Huffman
-        let compressed = self.huffman.encode(&tokens)?;
+        self.bytes_processed += result.bytes_consumed;
+        self.bytes_output += result.bytes_written;
 
-        // Write to output
-        let written = self.bit_writer.write_to_buffer(&compressed, output)?;
-        self.bytes_output += written;
-
-        if finish {
-            self.finished = true;
+        match result.status {
+            Ok(MZStatus::StreamEnd) => self.finished = true,
+            Ok(MZStatus::Ok) => {}
+            Ok(MZStatus::NeedDict) => return Err(TrickleError::InvalidData),
+            Err(MZError::Buf) if output.is_empty() => return Err(TrickleError::InsufficientOutput),
+            Err(MZError::Buf) => return Err(TrickleError::NeedsMoreWork),
+            Err(_) => return Err(TrickleError::InvalidData),
         }
 
-        Ok((input.len(), written, self.finished))
+        if result.bytes_consumed == 0 && result.bytes_written == 0 && !self.finished {
+            if output.is_empty() {
+                return Err(TrickleError::InsufficientOutput);
+            }
+            if input.is_empty() && !finish {
+                return Ok((0, 0, false));
+            }
+            return Err(TrickleError::NeedsMoreWork);
+        }
+
+        Ok((result.bytes_consumed, result.bytes_written, self.finished))
     }
 
-    pub fn stats(&self) -> CompressionStats {
+    pub(crate) fn stats(&self) -> CompressionStats {
         CompressionStats {
             bytes_processed: self.bytes_processed,
             bytes_output: self.bytes_output,
@@ -71,8 +98,8 @@ impl DeflateState {
     }
 }
 
-pub struct InflateState {
-    // Simplified inflate state for basic decompression
+pub(crate) struct InflateState {
+    inflater: Box<MinizInflateState>,
     finished: bool,
 }
 
@@ -83,28 +110,33 @@ impl Default for InflateState {
 }
 
 impl InflateState {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
+            inflater: MinizInflateState::new_boxed(DataFormat::Raw),
             finished: false,
         }
     }
 
-    pub fn decompress_chunk(
+    pub(crate) fn decompress_chunk(
         &mut self,
         input: &[u8],
-        output: &mut [u8]
+        output: &mut [u8],
     ) -> Result<(usize, usize, bool)> {
-        // Simplified decompression - in real implementation this would
-        // parse DEFLATE streams and decompress them
-        if input.is_empty() {
-            self.finished = true;
+        if self.finished {
             return Ok((0, 0, true));
         }
 
-        // Placeholder: copy input to output (not real decompression)
-        let copy_len = input.len().min(output.len());
-        output[..copy_len].copy_from_slice(&input[..copy_len]);
+        let result = inflate(&mut self.inflater, input, output, MZFlush::None);
+        match result.status {
+            Ok(MZStatus::StreamEnd) => self.finished = true,
+            Ok(MZStatus::Ok) => {}
+            Ok(MZStatus::NeedDict) => return Err(TrickleError::InvalidData),
+            Err(MZError::Buf) if result.bytes_consumed != 0 || result.bytes_written != 0 => {}
+            Err(MZError::Buf) if output.is_empty() => return Err(TrickleError::InsufficientOutput),
+            Err(MZError::Buf) => return Err(TrickleError::InsufficientInput),
+            Err(_) => return Err(TrickleError::InvalidData),
+        }
 
-        Ok((copy_len, copy_len, copy_len == input.len()))
+        Ok((result.bytes_consumed, result.bytes_written, self.finished))
     }
 }
